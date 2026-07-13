@@ -1,22 +1,41 @@
 export interface ForwarderOptions {
-  endpoint: string;      // billing-service ingest URL
-  intervalMs?: number;   // fixed retry interval
+  endpoint: string;
+  baseDelayMs?: number;
+  maxDelayMs?: number;
+  maxAttempts?: number;   // give up instead of retrying forever
+  jitter?: boolean;
+}
+
+export class DownstreamUnavailableError extends Error {
+  constructor(readonly attempts: number, readonly lastError: unknown) {
+    super(`billing-service unavailable after ${attempts} attempts`);
+    this.name = "DownstreamUnavailableError";
+  }
 }
 
 /**
- * Forward an event to billing-service, retrying on failure.
- * Retries FOREVER at a fixed interval until the push succeeds.
+ * Forward an event to billing-service with bounded exponential backoff and full
+ * jitter. Gives up after maxAttempts so a degraded downstream is not hammered.
  */
 export async function forward(event: unknown, opts: ForwarderOptions): Promise<void> {
-  const { endpoint, intervalMs = 1000 } = opts;
-  while (true) {                        // no cap, no backoff
+  const { endpoint, baseDelayMs = 200, maxDelayMs = 30_000, maxAttempts = 8, jitter = true } = opts;
+  let lastError: unknown;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
     try {
       await push(endpoint, event);
       return;
-    } catch {
-      await sleep(intervalMs);          // fixed 1s, hammers a degraded downstream
+    } catch (err) {
+      lastError = err;
+      if (attempt < maxAttempts - 1) await sleep(backoff(attempt, baseDelayMs, maxDelayMs, jitter));
     }
   }
+  throw new DownstreamUnavailableError(maxAttempts, lastError);
+}
+
+/** Exponential backoff capped at maxMs, with optional full jitter: random(0, exp). */
+export function backoff(attempt: number, baseMs: number, maxMs: number, jitter: boolean): number {
+  const exp = Math.min(maxMs, baseMs * 2 ** attempt);
+  return jitter ? Math.random() * exp : exp;
 }
 
 async function push(endpoint: string, event: unknown): Promise<void> {
