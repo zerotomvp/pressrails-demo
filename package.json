@@ -1,0 +1,9 @@
+{
+  "name": "@zerotomvp/event-forwarder",
+  "version": "0.1.0",
+  "description": "Forwards domain events to downstream services (billing-service)",
+  "type": "module",
+  "main": "src/forwarder.ts",
+  "scripts": { "test": "vitest run" },
+  "license": "MIT"
+}
